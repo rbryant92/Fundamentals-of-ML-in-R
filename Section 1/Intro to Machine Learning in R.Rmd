@@ -1,0 +1,102 @@
+---
+title: "Intro to Machine Learning in R"
+author: "Richard Bryant"
+date: "10/12/2024"
+output: 
+  html_document:
+    code_folding: "show"
+---
+
+Welcome to this O'Reilly course in Fundamentals of Machine Learning in R!  This course aims to walk you through the nuances of a full machine learning problem example.  In this course, we would like to establish intuition and understanding of the fundamentals of machine learning, as we cover a wide variety of problems one will run into in real-life, applied ML problems: from data preprocessing, to training models, to tuning and evaluating them, to eventually finding a way to deploy them to get them into the hands of an end user.
+
+While it will be helpful for the participant to have some rudimentary experience with R as well as with machine learning, we will use this section to review some basics and help set the scene for the dataset we will be using and problems we will be solving in this course.
+
+### Machine Learning Overview ###
+
+```{r Load libraries and data}
+# install.packages('modeldata')
+library(modeldata)
+
+data(wa_churn)
+```
+
+Machine learning is a powerful subset of artificial intelligence that allows computers to learn from data.  In practice, what we often do is make predictions or decisions without explicit programming.  The implications of this are incredibly powerful and manifest in various aspects of your day to day.  We roughly categorize techniques in machine learning into two broad categories: **unsupervised learning**, and **supervised learning**.
+
+- **Unsupervised learning** problems involve working with unlabeled data.  Models identify patterns or grouping within the data; again, we do not have any explicit "response variable" to work off of.  A common branch of unsupervised learning is _clustering_ -- where we group similar data points into a predefined number of groups that are reasonably similar within and different between; another common application is _dimensionality reduction_, wehre we reduce the number of features in a dataset while minimizing loss of information.
+
+- **Supervised learning** is the focus of this course.  In this type of problem, we use labeled data, where each example from our data has a "label", also commonly referred to as a "response" or "outcome".  The model learns patterns from the data.  The two most common ways of doing this are as follows:
+
+  - **Classification**, where we predict a discrete label or category (this is in fact what we will be doing during this course)
+  - **Regression**, where we predict a continuous value
+
+Throughout this tutorial, we will be working with the Watson churn data from the 'modeldata' package.  Per the documentation, this dataset is sourced from IBM Watson Analytics in September 2018, and contains a factor for whether a customer churned or not, given various features for the customer.  Because this is a binary rather than a continuous response, this is a classification rather than a regression problem.  To be upfront: we want to train models to learn patterns in the data such that given various features, the model(s) can predict whether or not a customer will churn.  We would like to be able to generalize, so that the model can truly make these predictions on unseen data, with reasonable accuracy.  Our focus will be on **prediction** - improving metrics that indicate the model's ability to make predictions, rather than **inference** - that is, explaining what factors influence the response and by how much.
+
+Documentation: https://rdrr.io/cran/modeldata/man/wa_churn.html
+
+### Intro to R, RStudio, and Python ###
+
+As you have probably figured out at this point, during this course we will exclusively be using the R programming language.  We will be working with RStudio, and using a series of RMarkdown files.  Let's briefly introduce all of these, as well as some further motivation for why we are here today, using this language of all the others out there!
+
+**R** is a powerful programming language that was designed for statistical analysis and data visualization.  It has an ecosystem of packages specifically designed for data science and machine learning.  Of particular note is the entire "tidyverse" framework of packages.  While this is not a focal point of this course, this series of packages provides an amazing, unified framework for transforming data into a "tidy" format: that is, a format where each row of the data represents an observation, each column represents a feature, and each cell represents a data point.  There are many other packages in the tidyverse, including the very popular _ggplot2_, which produces world-class beautiful static visualizations.
+
+**RStudio** is by far and away the most popular integrated development environment (IDE) for R, for its user-friendly and easy to use interface where we can quickly view scripts, terminals, file organization, and documentation.  The files that make up this course are dynamic reports created using **RMarkdown**.  This framework is similar to the popular Jupyter Notebooks; we combine code, output, and text in one single file.  This is an excellent way to share reproducible learnings, research, and reports with others.
+
+A question many beginner and intermediate practitioners of data science and machine learning ask is around the difference, benefits, and disadvantages of R compared to the very popular Python.  It is true that both of these are very popular choices for data analysis, data scientists, and machine learning practitioners.  R remains incredibly popular today for a variety of reasons:
+
+- It was designed by statisticians for statisticians.  It makes it incredibly easy, within lines of code, to create linear models, test hypotheses, and return detailed summaries.  The syntax, functions, and output of these are often incredibly intuitive for those from statistical backgrounds.
+
+- In industry, it is used dominantly in research, academia, healthcare, the pharmaceutical, and the financial industries.  
+
+- R features a highly active community who have created a plethora of online resources, tutorials, and packages.
+
+- R has a tremendous ecosystem of packages, as described above.  It is true that Python is more versatile and intuitive for general programming and application development and is sometimes by many indices regarded as the most popular programming language in the world.  However, R is beloved and in dedicated use by many to this day, due to its strength in statistical analysis and visualization, the user-friendliness of the frameworks like tidyverse and tidymodels, the convenience of RMarkdown, and its overall learning curve.  Many individuals who do not explicitly come from strong programming or computer science backgrounds find R significantly easier to pick up compared to Python.  We believe in learning one of the two and getting very good at it, and the more that we can reduce those barriers to entry and make learning and doing machine learning as easy as possible, the better!
+
+### Tidymodels vs Caret ###
+
+In this sub-section, we will introduce the major two "packages" we will be covering in this course: Caret and Tidymodels.
+
+```{r Load libraries}
+#install.packages('caret')
+#install.packages('tidymodels')
+library(caret)
+library(tidymodels)
+```
+
+GitHub links:
+
+- *caret*: https://github.com/topepo/caret
+- *tidymodels*: https://github.com/tidymodels/tidymodels
+
+#### caret ####
+
+"caret", short of classification and regression training, is the older of the two packages.  It was developed by Max Kuhn and first released around 2010.  We will see numerous functionality from this package as we move through this course, including preprocessing, model training and tuning, resampling methods, and model evaluation.  However, as of 2024, the package is no longer developed, only maintained.  However, it features extensive documentation and a well-established user base, and many users find it somewhat simpler and easier to use compared to tidymodels.
+
+#### tidymodels ####
+
+"tidymodels" is very different from "caret", in the sense that it's not just one package - it bundles together many smaller packages into a unified framework.  It's newer, having first been released in 2019, and it is very similar to the "tidyverse" suite of packages, except the purpose here is around machine learning modeling rather than creating tidy datasets.
+
+From the GitHub documentation:
+
+- *broom* takes the messy output of built-in functions in R, such as lm, nls, or t.test, and turns them into tidy data frames.
+- *dials* has tools to create and manage values of tuning parameters.
+- *dplyr* contains a grammar for data manipulation.
+- *ggplot2* implements a grammar of graphics.
+- *infer* is a modern approach to statistical inference.
+- *parsnip* is a tidy, unified interface to creating models.
+- *purrr* is a functional programming toolkit.
+- *recipes* is a general data preprocessor with a modern interface. It can create model matrices that incorporate feature engineering, imputation, and other help tools.
+- *rsample* has infrastructure for resampling data so that models can be assessed and empirically validated.
+- *tibble* has a modern re-imagining of the data frame.
+- *tune* contains the functions to optimize model hyper-parameters.
+- *workflows* has methods to combine pre-processing steps and models into a single object.
+- *yardstick* contains tools for evaluating models (e.g. accuracy, RMSE, etc.).
+
+<br>
+
+#### Which one? ####
+
+This is up to you!
+
+We point out again that "caret" is not currently being developed.  However, some users prefer it due to the syntax, consistent interface, and easy to use functions.  We want you to use the approach with which you are the most comfortable.  Therefore, this course will whenever possible demonstrate utilities in both packages.   This way you can compare the two and pick your favorite.
+
+

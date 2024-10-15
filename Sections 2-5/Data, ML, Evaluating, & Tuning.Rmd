@@ -1,0 +1,624 @@
+---
+title: "Sections 2-5: Data Preprocessing, Models, Evaluating, & Tuning"
+author: "Richard Bryant"
+date: "10/12/2024"
+output: 
+  html_document:
+    code_folding: "show"
+---
+
+Welcome to the markdown for Sections 2 through 5!  This RMarkdown file will be used to cover the following four sections: data preprocessing, creating models, metrics for evaluation of the models, and then tuning.  Throughout this file, whenever possible, we will illustrate all techniques with both the Caret and the Tidymodels libraries, so that the participant can make up their own mind which of the two frameworks they prefer.
+
+
+```{r Load libraries and data}
+library(caret)
+library(modeldata)
+library(tidymodels)
+library(tidyverse)
+
+data(wa_churn)
+```
+
+First and foremost, we want to emphasize that it is not advised just to take your data right out of the box and train a machine learning model on it!  It's recommended to first inspect what the data even looks like, from a structural and descriptive standpoint, and perform operations on it to get it in an appropriate format.  On one hand, the packages in the tidyverse help tremendously to make this possible.  The dataset we are using today is reasonably "tidy" - in the sense that each row represents a unique observation, each column represents a variable, and each cell represents data.  However, that's just the first step - we aren't yet ready for machine learning.  That's where our first section comes in.
+
+## Section 2 - Data Preprocessing ## 
+
+This section will cover basic exploration of our data, and some operations that are standard for machine learning problems.  Before we do that, there's three functions you really can't go wrong with when you're starting out in any analysis: `head()`, `str()`, and `summary()`.
+
+```{r Head}
+head(wa_churn)
+```
+
+```{r Structure}
+str(wa_churn)
+```
+
+```{r Summary}
+summary(wa_churn)
+```
+
+
+From these first few functions we gain a visual sense of what the dataset looks like, what the datatypes look like, and some key distributions.  Let's start with our response variable: churn - Yes/No.  At 5174 No vs. 1869 Yes, this is an imbalance of roughly 73/27.  While this is not a terrible imbalance per se, it is certainly not a 50/50 split.  It is not totally uncommon in machine learning, especially in the financial industry, to see class imbalances as bad as 90/10, or even 95/5 or 99/1!  However, it will present challenges for us later that we will address, especially in the `Tuning Models` section.  Additionally, as we inspect the dataset we see a mix of variable types: some numerics and doubles, and some factors.  Factors are useful features for readability purposes, but we will eventually need to transform this dataset so that each level of a factor variable is treated as its own variable, and given its own column, equal to 1 if that level is true for that observation and 0 otherwise.  Another (minor) issue we notice is that the `total_charges` variable has 11 missing values.
+
+```{r Missingness}
+sum(is.na(wa_churn))
+```
+
+We will use the two frameworks to perform the following operations:
+
+#### Operations ####
+
+**Imputing missing data**: Most machine learning algorithms cannot handle missing values.  We don't want to get rid of 11 whole rows of data.  Therefore, we're going to "impute", or make up those 11 values.  There is not a good "cutoff" rule of thumb here per se, but let's suppose this variable were 40% missing or more.  We might ask next if these data are missing at random.  That's usually not the case, but suppose it is here.  Then we might just have to get rid of the whole variable.  In this case, we're comfortable making up just over 0.1% of the values for one variable!
+
+**Outlier removal**: I am looking at these variables to see if there is obvious nonsense in them that makes no sense.  For example, if I see negative monthly charges or negative total charges, I doubt it is real.  That is not the case here, and while some of these variables might have mild right skew, there is nothing on the high end that looks unbelievable.  Therefore, we are not going to remove outliers here.  It's generally good to first evaluate if the data even looks believable, and if so, you might use a rule of thumb like outside (Q1 - 1.5 * IQR) or (Q3 + 1.5* IQR).
+
+**One-hot encoding**: This is the process described above where each different level of a feature gets its own column.  That is a necessary step for many machine learning algorithms.  Essentially, we're converting a small number of factor variables into a larger number of integer variables.
+
+**Standardization**: The variables are on different scales.  For instance, we will have many that are simple 1 vs. 0, while the monthly charges and total charges variables are on much higher scales.  This can create bias and skew with many machine learning algorithms; so to ensure that each variable is treated the same, we standardize the variables.  It's common either to transform variables into Z-scores, or to within a 0-1 range.
+
+Before we do this, it is important to cover the following concept:
+
+**Partitioning**: For a machine learning problem, you need a training set and a test set.  (Optionally, you can include a separate hold-out validation set as well.)  A very typical split for training vs test is about 70-30, though anything from 65-35 to 80-20 is probably fairly reasonable.  The idea is to assess how the model will generalize to unseen data.  The training set is what the model learns from, and the test set is what we use to evaluate the model's performance.
+
+It should be noted that _whenever possible_, we want to perform data processing operations on the two sets of data separately.  This is because we want the test set to be COMPLETELY sight unseen data when we go to train models.  If we perform the operations on all of the data together, things can happen like the test set influencing scaling parameters used to standardize the training set, or using the training data to figure out how to handle missing values in the test data, creating bias.  So partitioning will be our first step, then we will set up our processing pipelines and apply them to the sets individually.  We'll start by using the `createDataPartition()` function from caret.
+
+```{r Split data into train vs testing}
+set.seed(42)
+train_index <- createDataPartition(wa_churn$churn, p=0.7, list=FALSE)
+train_data <- wa_churn[train_index, ]
+test_data <- wa_churn[-train_index, ]
+```
+
+Great.  Now, let's use caret!
+
+#### Caret ####
+
+```{r Impute missing data}
+median_train_charges <- median(train_data$total_charges, na.rm=TRUE)
+median_test_charges <- median(test_data$total_charges, na.rm=TRUE)
+
+train_data_imp <- train_data
+test_data_imp <- test_data
+
+train_data_imp$total_charges[is.na(train_data_imp$total_charges)] <- median_train_charges
+test_data_imp$total_charges[is.na(test_data_imp$total_charges)] <- median_test_charges
+```
+
+```{r One-hot encoding}
+dummies <- dummyVars(churn ~ ., data=train_data_imp)
+train_data_encoded <- predict(dummies, newdata=train_data_imp)
+train_data_encoded <- as.data.frame(train_data_encoded)
+
+test_data_encoded <- predict(dummies, newdata=test_data_imp)
+test_data_encoded <- as.data.frame(test_data_encoded)
+```
+
+```{r Standardization}
+preProcess_scaling <- preProcess(train_data_encoded, method = c("center", "scale"))
+train_data_caret <- predict(preProcess_scaling, train_data_encoded)
+test_data_caret <- predict(preProcess_scaling, test_data_encoded)
+```
+
+Great!  Now, it's worth sanity checking that we did that right.
+
+```{r Sanity check}
+head(train_data_caret)
+head(test_data_caret)
+```
+
+Looks good!   We've successfully imputed missing data, performed one-hot encoding, and standardized our training and test sets.  Now, let's see how we would do this with Tidymodels.
+
+#### Tidymodels ####
+
+With Tidymodels, the process is a little more streamlined.  Essentially, we define a "recipe".  This recipe is just like what you use when you're cooking: it's essentially a list of steps that tells you what to do to go from ingredients to your meal.  Well, when we define a recipe for data preprocessing, we're telling R what steps to take to transform our training and test data to the format we want.  Observe.  We'll start from the train and test data, before we performed any steps.  
+
+```{r Tidymodels recipe}
+churn_recipe <- recipe(churn ~ ., data=train_data) %>%
+  step_impute_knn(all_numeric_predictors()) %>%  # impute missing values
+  step_dummy(all_nominal_predictors()) %>%  # one-hot encoding
+  step_scale(all_numeric_predictors()) %>%  # standardization
+  step_center(all_numeric_predictors())
+```
+
+Great.  We've defined the recipe.  Now, we need to prepare it, and "bake it" - aka, apply it to the training data, followed by the testing data.
+
+```{r Tidymodels recipe}
+churn_prep <- prep(churn_recipe, training=train_data)
+```
+
+```{r Apply to the training set}
+train_data_tidymodels <- bake(churn_prep, new_data=train_data)
+```
+
+```{r Apply to the testing set}
+test_data_tidymodels <- bake(churn_prep, new_data=test_data)
+```
+
+Next, let's sanity check again.  If it looks good, we're ready to move on and train some models!
+
+```{r Sanity check}
+head(train_data_tidymodels)
+head(test_data_tidymodels)
+```
+
+## Section 3 - Training Models ##
+
+We are now ready to move on and fit some preliminary machine learning models!   We've been through two different pipelines illustrating the transformation of the data into a better and more usable format, and we're ready to at least dip our toe in the water.  It's not a bad practice to start with something simple like a logistic regression model first.  This will almost certainly not be our best performing model, but that's not really the point.  We would like to establish a nice baseline and see how much better other models perform (more on this in Section 4), and how much better we do once we start utilizing options like up- and down- sampling and hyperparameter tuning (more on this in Section 5).
+
+This is not a theoretical machine learning course per se.  Our emphasis in this course is more on applications, on building intuition of how to "attack" machine learning problems, and to demonstrate how these problems can be solved from beginning to end using R.  However, we will provide a brief introduction to the models we will be trying in this section.
+
+**Logistic Regression**: Linearly models the log odds of the positive class in terms of (assumed) independent features.
+
+**KNN**: Short for K-Nearest Neighbors, this is a simple and popular algorithm that classifies a data point into one of the target classes based on the majority class among its 'k' nearest neighbors.  'k' is a hyperparameter we pass upfront; at least at first we need to just take a guess at the best performing value.
+
+**Decision Trees**: Also a very simple and popular algorithm that is often presented for a simple and clean visual story.  In these, each node represents a decision based on an (informative) feature, and each branch represents the outcome of that decision.  Leaf nodes represent class labels.  These are intuitive but tend to overfit and not have the best performance.
+
+**Random Forests**: These correct for the overfitting and performance issues of decision trees by ensembling the results of multiple decision trees and combining their predictions.  Random Forests train trees on random subsets of the data and of the features, and the trees are allowed to "vote" (this process is known as 'bagging').  Overall, these usually improve on the robustness and accuracy of Decision Trees.
+
+**Elastic Net**: A regularized regression method that linearly combines the L1 (lasso) and L2 (ridge) penalties.  Lasso is a method that performs both variable selection and regularization; ridge regression is a similar regularization method that is commonly used to reduce multicollinearity.  Elastic Net essentially combines the advantages of both the lasso and ridge methods while mitigating the limitations of both methods.
+
+This is by no means a comprehensive list of machine learning algorithms!  Other popular approaches include Naive Bayes and Support Vector Machines.  One could also easily make an entire course around Neural Networks.  However, for the purposes of this course, we think with these algorithms that we will be able to drive home the main ideas.
+
+#### Caret ####
+
+We start by defining a "control object".  This essentially tells the models the cross-validation strategy.
+
+```{r Define control object}
+control <- trainControl(method='cv', number=5, classProbs=TRUE)
+```
+
+We'll fit our logistic regression model and summarize first, then move on to the others.  Our foundation in caret for all of these is the one-stop `train()` function.
+
+```{r Fit logistic regression}
+model_logreg <- train(churn ~ ., data=train_data_tidymodels, method='glm', family='binomial', trControl=control)
+summary(model_logreg)
+```
+
+Great.  Next, let's create a confusion matrix so that we get some idea of how this thing performs.
+
+```{r Confusion matrix}
+# make predictions on the test data
+predictions_logistic <- predict(model_logreg, newdata=test_data_tidymodels)
+
+# create a confusion matrix
+confusion_logistic <- confusionMatrix(as.factor(predictions_logistic), as.factor(test_data_tidymodels$churn))
+
+# print the confusion matrix
+print(confusion_logistic)
+```
+
+We are literally going to spend the entire next section of this course covering how to evaluate all of these metrics!  It is nice how much information we are provided here, but for now let's simply focus being able to read the confusion matrix up at the top.  And don't worry if it seems like this isn't the best performing model in the world, because we stress again that this is just a baseline.
+
+Next, let's fit all the other models.
+
+```{r Fit other models}
+# KNN
+model_knn <- train(churn ~ ., data=train_data_tidymodels, method="knn", trControl=control)
+
+# Decision Tree
+model_tree <- train(churn ~ ., data=train_data_tidymodels, method="rpart", trControl=control)
+
+# Random Forest
+model_rf <- train(churn ~ ., data=train_data_tidymodels, method="rf", trControl=control)
+
+# fit Elastic Net
+model_en <- train(churn ~ ., data=train_data_tidymodels, method="glmnet", trControl=control)
+```
+
+Let's look at say one of them.
+
+```{r Elastic Net summary}
+# make predictions on the test data
+predictions_en <- predict(model_en, newdata=test_data_tidymodels)
+
+# create a confusion matrix
+confusion_en <- confusionMatrix(as.factor(predictions_en), as.factor(test_data_tidymodels$churn))
+
+# print the confusion matrix
+print(confusion_en)
+```
+
+Notice that it's not super easy to compare the performance of one model to another, because there are so many moving parts: the four confusion matrix counts, a series of metrics down below, etc...  that's fine, that's the topic for the entire next section!  We'll conclude this section by demonstrating how to do the exact same process shown above in Tidymodels.
+
+#### Tidymodels ####
+
+Tidymodels will look a little more complicated than what we did with Caret where we had a one-stop shop `train()` function and just pass the model of interest as an argument.  In Tidymodels when we go to train models, similar to what we saw with data preprocessng, we build pipelines where one function "pipes" to the next in a series of steps.  We start by specifying the models, then fit them using a `workflow()` object, then fitting them. Let's go take it for a spin.
+
+```{r Specify models}
+logreg_model <- logistic_reg(mode='classification') %>% set_engine('glm')
+knn_model <- nearest_neighbor(mode='classification') %>% set_engine('kknn')
+tree_model <- decision_tree(mode='classification') %>% set_engine('rpart')
+rf_model <- rand_forest(mode='classification') %>% set_engine('randomForest')
+enet_model <- logistic_reg(penalty=0.1, mixture=0.5) %>%
+  set_engine('glmnet')
+```
+
+Beautiful.  Notice what we did with the Elastic Net, where we use a different engine, but essentially what we're doing is just a logistic regression with regularization parameters added.  Next, let's build the workflows.  There's a couple different ways that we could approach this.  We'll add the recipes to the workflows to demonstrate how we're building a cohesive beginning-to-end pipeline, and then pass the training data in to fit later.  But we could just as easily just skip adding the recipes and pass the already preprocessed data to fit later.
+
+```{r Build tidymodels workflows}
+logreg_workflow <- workflow() %>%
+  add_model(logreg_model) %>%
+  add_recipe(churn_recipe)
+
+knn_workflow <- workflow() %>%
+  add_model(knn_model) %>%
+  add_recipe(churn_recipe)
+
+tree_workflow <- workflow() %>%
+  add_model(tree_model) %>%
+  add_recipe(churn_recipe)
+
+rf_workflow <- workflow() %>%
+  add_model(rf_model) %>%
+  add_recipe(churn_recipe)
+
+enet_workflow <- workflow() %>%
+  add_model(enet_model) %>%
+  add_recipe(churn_recipe)
+```
+
+Now we're ready to fit:
+
+```{r Build tidymodels workflows}
+logreg_fit <- fit(logreg_workflow, data=train_data)
+knn_fit <- fit(knn_workflow, data=train_data)
+tree_fit <- fit(tree_workflow, data=train_data)
+rf_fit <- fit(rf_workflow, data=train_data)
+enet_fit <- fit(enet_workflow, data=train_data)
+```
+
+Great!  Again, we've illustrated two different ways of getting to the same place - five different methods trained and ready to go for predicting data.  We'll try one of these out here and then move on.  
+
+```{r Create predictions}
+pred_en <- predict(enet_fit, new_data=test_data, type='prob')
+
+# convert predictions to a binary class (threshold, e.g., 0.5)
+pred_classes_en <- factor(ifelse(pred_en$.pred_Yes > 0.5, 'Yes', 'No'), levels=c('Yes', 'No'))
+```
+
+```{r Create confusion matrix}
+# create a confusion matrix
+confusion_enet <- confusionMatrix(as.factor(pred_classes_en), as.factor(test_data_tidymodels$churn))
+
+# print the confusion matrix
+print(confusion_enet)
+```
+
+## Section 4 - Evaluating Models ##
+
+```{r Load ROC libraries}
+library(pROC)
+library(PRROC)
+```
+
+We will now discuss how to evaluate the quality of a machine learning model, with particular focus on ones like the classifiers we have been creating here.  We will finally go through all those metrics we have been looking at from the previous sections and describe what they mean, and the trade-offs between them!
+
+First of all, remember that we are working with a binary classification problem here.  Now, if we had a continuous response, this would be a completely different story.  In this scenario, it is very common to use RMSE (Root Mean Squared Error) as the measure of accuracy - this is simply equal to the square root of the sum of squared differences between the actual values and the predicted values.  There are several adjustments possible to this, but it is by far the most common loss function when we work with continuous data.
+
+Obviously, we can't use something like this for a binary classification problem, and there are many different trade-offs and considerations to think about.  Later in this section we will talk about more of the practical business considerations and the relationships and balances between these metrics.
+
+**Accuracy**: The proportion of correctly classified instances out of the total instances.
+
+**Sensitivity/Recall**: The proportion of true positives correctly identified out of total actual positives
+    - e.g. of the customers that churned, how many did we correctly predict to do so?
+
+**Specificity**: The proportion of true negatives correctly identified out of total actual negatives
+    - e.g. of the customers that did not churn, how many did we correctly predict to not churn?
+
+**Precision/Positive Predictive Value**: The proportion of predicted positives that were actually true positives
+    - e.g. of the customers for whom we predicted to churn, how many of them actually did churn?
+
+**F1 Score**: The harmonic mean of precision and recall
+
+There is a lot there and some of them move in opposite directions.   But for a moment, let's go back to our baseline logistic regression classifier.
+
+```{r Recall baseline}
+print(confusion_logistic)
+```
+
+Notice all those pre-computed metrics provided by the confusion matrix function from caret.  It's a useful exercise to go through and manually validate these.  
+
+```{r Get evaluation metrics}
+print(paste("Accuracy:", (310 + 1395) / (310 + 1395 + 157 + 250)))
+print(paste("Sensitivity:", 310 / (310 + 250)))
+print(paste("Specificity:", 1395 / (1395 + 157)))
+print(paste("Precision:", 310 / (310 + 157)))
+```
+
+Just thinking over these results for a moment, notice that the specificity is quite strong (this is not uncommon when we have a majority of instances belonging to the negative class), while the precision is reasonable but the sensitivity is not quite as strong.  It is very common to struggle with one, or both of sensitivity and precision in problems with imbalanced classes.  We stress again that this isn't even a terribly imbalanced class problem; but prediction of a rare event with precision speaks for itself that it is a difficult balance to strike.
+
+It's also worth thinking about what we really want to optimize with this particular problem.  Consider both of these arguments:
+
+1) The client needs to proactively identify customers which will churn as quickly as possible; that way they can divert more resources toward retention and try to reduce the churn, as it represents very serious risk for the client's revenue.
+
+2) The client is very busy with many monitors and pieces of information they look at frequently; if they are going to have another tool shipped, they want as high of confidence in that tool as possible.  Therefore, if they are receiving an early warning system about a customer's likelihood to churn, they want as high probability as possible that that is truly the case before using limited resources in an effort to change their mind.
+
+Both of these thought processes are quite possible, and similar ideas occur all the time in the real world!  That's also not to say one thought process is better than the other.  It all depends on the business's prerogative and priorities.
+
+#### ROC Curves ####
+
+Now at this point, let's think about the following extreme scenario.  Suppose we have a model that is 100% perfectly sensitive.  That's not hard at all to do - just create a model that says ALL customers are going to churn!  That way, you would correctly identify all the customers that would in fact churn; but such a model wouldn't be able to discriminate between positives and negatives, therefore it would be useless.  However, this situation does help us think about the tradeoff between sensitivity and both specificity and precision.  If we lower our threshold and make it easier to predict positives, it should not be surprising that we are going to get more false positives (i.e. lower precision), and also that we are less likely to correctly identify negatives.
+
+It follows that it is very important to have a measure that balances for more than one of these metrics at a time.  Accuracy does not do a great job at this.  Suppose 1% of the customers churned and we predicted no one would churn; that model is 99% accurate and also useless.  A better example of this is the F1 score, which will be somewhere between precision and recall.  So at this point, we introduce two new concepts: the Receiver Operating Characteristic (ROC) curve, and the Precision-Recall (PR) curve, and the areas under them: the _AUROC_ and the _AUPRC_.
+
+**AUROC**: Measures the model's ability to distinguish classes, ranging from 0 to 1.
+
+**AUPRC**: Measures the trade-off between Precision and Recall.  This also ranges from 0 to 1, and is particularly useful for imbalanced datasets.
+
+As stressed earlier, we do not necessarily have the most imbalanced dataset ever here, but it is probably enough so that we want to prioritize it.  In particular, we will look at both of them for two different classifiers, and compare.  To do this, we are using functions from the pROC and PRROC packages.
+
+# TODO: Should train_model_tidymodels be the input to these models?
+# TODO: Tweak the elastic net parameters
+
+```{r Get predictions}
+# Make predictions on the test data using the fitted models
+pred_logistic <- predict(model_logreg, newdata = test_data_tidymodels, type = "prob")[, 2]
+pred_en <- predict(model_en, newdata = test_data_tidymodels, type = "prob")[, 2]
+```
+
+```{r AUROC: Logistic Regression}
+roc_logistic <- roc(test_data$churn, pred_logistic)
+auc_logistic <- auc(roc_logistic)
+plot(roc_logistic, main = "AUROC - Logistic Regression")
+auc_logistic
+```
+
+```{r PRAUC: Logistic Regression}
+pr_logistic <- pr.curve(scores.class0=pred_logistic, scores.class1=test_data$churn, curve=TRUE)
+pr_auc_logistic <- pr_logistic$auc.integral
+plot(pr_logistic, main = "PR-AUC - Logistic Regression")
+pr_auc_logistic
+```
+
+Unsurprisingly, the area under the ROC curve is between sensitivity and specificity, and the area under the precision-recall curve is between the precision and the recall.  Of interest here is the fact that the AUROC is significantly higher than AU-PRC.  We emphasize again that when we have imbalanced data, AUROC can be misleadingly high and AUPRC is more informative.  This is because AUROC does not differentiate well between the majority and minority classes (again - just predict the majority class most of the time!).  But there is a difference between the two in terms of our interpretations.  In the case of AUROC, an area equal to 0.5 is said to be equivalent o random guessing.  However, with AU-PRC, a classifier equivalent to random guessing is equal to the prevalence of the positive class - so we can measure the quality of our classifier in terms of X better than random.  But in both cases, a perfect classifier is equal to 1 and a classifier that is wrong all the time is 0.  It's very difficult to come up with a rule for what is "good", per se, but this does provide us a useful framework for comparing models to each other.  We'll conclude by comparing that Logistic Regression classifier to our Elastic Net classifier by a method that isn't just confusion matrices!
+
+```{r AUROC: Elastic Net}
+roc_en <- roc(test_data$churn, pred_en)
+auc_en <- auc(roc_en)
+plot(roc_en, main = "AUROC - Elastic Net")
+auc_en
+```
+
+```{r PRAUC: Elastic Net}
+pr_en <- pr.curve(scores.class0=pred_en, scores.class1=test_data$churn, curve=TRUE)
+pr_auc_en <- pr_en$auc.integral
+plot(pr_en, main = "PR-AUC - Elastic Net")
+pr_auc_en
+```
+
+
+## Section 5 - Tuning Models ##
+
+```{r Load library}
+library(ROSE)
+```
+
+We will now explore multiple approaches for improving the performance of classifiers, now that we've gone through initializing them (both a baseline simple logistic regression method and some more sophisticated methods).  Our classifiers, for the most part, have been used "out of the box", with no real mind paid to these classifiers' individual "tunings".  Do not take the title of this particular section too literally - while hyperparameter tuning is something we will be covering in this section, we will be covering these as well as up-sampling and down-sampling, which are two popular approaches to the imbalanced class problem we keep mentioning.
+
+#### Upsampling & Downsampling ####
+
+We have spent a lot of time thus far discussing the challenges associated with class imbalance.  It is very rare in the real world to find datasets where classes have perfect 50-50 balances.  In fact, many real world datasets can have class imbalances as extreme as 95-5, or even 99-1!  Necessarily, this makes it incredibly difficult for the model to learn true differences between the majority and minority classes.  Two method swe have for addressing this issue are _upsampling_ (also known as over-sampling), where we increase the number of instances in the minority class, and _downsampling_ (also known as under-sampling), where we decrease the number of instances in the majority class.
+
+In general, downsampling is probably somewhat riskier compared to upsampling, because we risk losing important information by removing examples from thje majority class.  However, we note that with upsampling we can risk overfitting (in contrast with downsampling where we risk underfitting).  We will use the ROSE package to illustrate both here, and let's just see how we do!  Note the "N" parameter here, which allows us to tweak exactly how much we are up- or down- sampling.
+
+```{r Upsample data}
+set.seed(42)
+up_sampled_data <- ovun.sample(churn ~ ., data=train_data_tidymodels, method='over', N=30000)$data
+```
+
+```{r Downsample data}
+set.seed(42)
+down_sampled_data <- ovun.sample(churn ~ ., data=train_data_tidymodels, method='under', N=2500)$data
+```
+
+Let's now illustrate how a model like the EN will perform on each of these two sets of data...
+
+```{r Fit two elastic nets}
+model_en_US <- train(churn ~ ., data=up_sampled_data, method="glmnet", trControl=control)
+model_en_DS <- train(churn ~ ., data=down_sampled_data, method="glmnet", trControl=control)
+```
+
+```{r Get upsampling performance}
+predictions_US <- predict(model_en_US, newdata=test_data_tidymodels)
+
+# create a confusion matrix
+confusion_enet_US <- confusionMatrix(as.factor(predictions_US), as.factor(test_data_tidymodels$churn))
+print(confusion_enet_US)
+```
+
+```{r Get downsampling performance}
+predictions_DS <- predict(model_en_DS, newdata=test_data_tidymodels)
+
+# create a confusion matrix
+confusion_enet_DS <- confusionMatrix(as.factor(predictions_DS), as.factor(test_data_tidymodels$churn))
+print(confusion_enet_DS)
+```
+
+Wow!  So actually, the confusion matrix when we tried up-sampling ended up wildly imbalanced, with great sensitivity but abysmal specificity and mediocre precision.  But when we tried downsampling, we ended up with a very balanced model.  We do encourage participants to try this with different configurations of N, and encourage trying both approaches regardless of the problem.
+
+#### Grid Search & Random Search #####
+
+Next, we will cover hyperparameter tuning.  A **hyperparameter** is a configuration variable that is set before the learning process begins and controls the behavior of the training algorithm.  Unlike model parameters, which are learned from the training data, hyperparameters are typically determined through experimentation.  They can significantly influence model performance, and we will observe this for the remainder of this section.  We do note that, while this is not a theoretical machine learning course, hyperparameter tuning can require some prior knowledge about the underlying method, and normal ranges for their hyperparameters - not to mention what the hyperparameters for that particular engine actually are.  We do encourage reading the documentation, if one isn't totally sure about these things!
+
+There are two different approaches we will illustrate here for hyperparameter tuning:
+
+**Grid Search**: This is a hyperparameter tuning method where we manually specify a set of values for hyperparameters to be evaluated.  The model searches through all sets of hyperparameter tunings, and via cross validation, finds the best performing model based on a pre-specified evaluation metric.
+
+**Random Search**: With random search, we randomly sample from a distribution of possible hyperparameter values.  The range to randomly sample from is defined, and then we randomly sample a fixed number of combinations from these ranges.  Generally, this is faster and more efficient than grid search, but because we are only sampling from a subset of all possible combinations, there is no guarantee that the optimal combination will be found.
+
+We will now illustrate both grid search and random search, using both Caret and Tidymodels.
+
+##### Caret - Grid Search #####
+
+```{r Define grid search}
+grid_enet <- expand.grid(
+  alpha = seq(0, 1, by=0.1),
+  lambda = seq(0.01, 0.2, by=0.01)
+)
+
+control_enet <- trainControl(method='cv', number=5, classProbs=TRUE)
+```
+
+```{r Train model with grid}
+set.seed(42)
+model_enet_grid <- train(churn ~ ., data=train_data_tidymodels, method='glmnet', tuneGrid=grid_enet, trControl=control_enet)
+```
+
+```{r Find best parameters}
+print(model_enet_grid$bestTune)
+```
+
+Great!  How does it perform?
+
+```{r Evaluate the model}
+predictions_enet_grid_caret <- predict(model_enet_grid, newdata=test_data_tidymodels)
+
+# create a confusion matrix
+confusion_enet_grid_caret <- confusionMatrix(as.factor(predictions_enet_grid_caret), as.factor(test_data_tidymodels$churn))
+print(confusion_enet_grid_caret)
+```
+
+Interesting.  Now, let's try random search.
+
+##### Caret - Random Search #####
+
+```{r Define random search}
+random_search_enet <- function(data, control) {
+  grid_enet_random <- expand.grid(
+    alpha = runif(10, 0, 1),
+    lambda = runif(10, 0.01, 0.2)
+  )
+
+  # tune
+  model_enet_random <- train(churn ~ ., data=data, method='glmnet', tuneGrid=grid_enet_random, trControl=control)
+
+  return(model_enet_random)
+}
+
+control_enet_random <- trainControl(method='cv', number=5, classProbs=TRUE)
+```
+
+```{r Implement random search}
+set.seed(42)
+model_enet_random <- random_search_enet(train_data_tidymodels, control_enet_random)
+```
+
+```{r Get best parameters}
+print(model_enet_random$bestTune)
+```
+
+That's a fairly different set of optimal parameters that we came up with... let's try this one out to see how it did.
+
+```{r Evaluate model}
+predictions_enet_random_caret <- predict(model_enet_random, newdata=test_data_tidymodels)
+
+# create a confusion matrix
+confusion_enet_random_caret <- confusionMatrix(as.factor(predictions_enet_random_caret), as.factor(test_data_tidymodels$churn))
+print(confusion_enet_random_caret)
+```
+
+Great.  Next, let's try the same stuff with tidymodels!  Remember that we have already defined an `enet_model` using the 'glmnet' engine and the 'classification' mode, and a workflow by adding the `enet_model` and the `churn_recipe`.  Here, however, we are tell the specification that we will tune the hyperparameters later, rather than manually passing them as we did before.  Note that there is a different set of hyperparameters we are using here.
+
+##### Tidymodels - Grid Search #####
+
+```{r Redefine tidymodels model & workflow}
+enet_model <- logistic_reg(penalty=tune(), mixture=tune()) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+enet_workflow <- workflow() %>%
+  add_model(enet_model) %>%
+  add_recipe(churn_recipe)
+```
+
+```{r Define and grid}
+enet_grid <- expand.grid(
+  penalty = seq(0.001, 0.5, 0.01),
+  mixture = seq(0.1, 0.9, 0.1)
+)
+
+set.seed(42)
+enet_tune_grid <- tune_grid(
+  enet_workflow,
+  resamples=vfold_cv(train_data, v=10),
+  grid=enet_grid
+)
+```
+
+```{r Get best grid}
+best_enet_grid <- select_best(enet_tune_grid, metric='accuracy')
+print(best_enet_grid)
+```
+
+```{r Apply grid}
+final_enet_grid <- finalize_workflow(enet_workflow, best_enet_grid)
+enet_fit_grid <- fit(final_enet_grid, data=train_data)
+```
+
+```{r Get confusion matrix}
+predictions_enet_grid_tm <- predict(enet_fit_grid, new_data=test_data, type='class')
+
+results_enet_grid_tm <- test_data %>%
+  bind_cols(predictions_enet_grid_tm) %>%
+  rename(predicted_class = .pred_class)
+
+confusion_enet_grid_tm <- conf_mat(results_enet_grid_tm, truth=churn, estimate=predicted_class)
+
+print(confusion_enet_grid_tm)
+```
+
+Not bad.  Let's wrap up by trying random search with Tidymodels.
+
+##### Tidymodels - Random Search #####
+
+```{r Implement random search grid}
+enet_random_grid <- expand.grid(
+  penalty = seq(0.001, 0.5, 0.01),
+  mixture = seq(0.1, 0.9, 0.1)
+)
+
+set.seed(42)
+enet_tune_random <- tune_grid(
+  enet_workflow,
+  resamples=vfold_cv(train_data, v=5),
+  grid=enet_random_grid
+)
+```
+
+```{r Get best}
+best_enet_random <- select_best(enet_tune_random, metric='accuracy')
+final_enet_random <- finalize_workflow(enet_workflow, best_enet_random)
+```
+
+```{r Apply grid}
+enet_fit_random <- fit(final_enet_random, data=train_data)
+```
+
+```{r Evaluate model}
+predictions_enet_random_tm <- predict(enet_fit_random, new_data=test_data, type='class')
+
+results_enet_random_tm <- test_data %>%
+  bind_cols(predictions_enet_random_tm) %>%
+  rename(predicted_class = .pred_class)
+
+confusion_enet_random_tm <- conf_mat(results_enet_random_tm, truth=churn, estimate=predicted_class)
+
+print(confusion_enet_random_tm)
+```
+
+That does not seem as good.  So again, we know how difficult and messy it is to compare models just simply from eyeballing confusion matrices, not to mention how dependent it is on the threshold.  So we will conclude this section (and this markdown file...) by comparing the PR-AUC's for the six different types of Elastic Nets we've created.
+
+```{r Get PR-AUCs of all models}
+pr_auc_US <- pr.curve(scores.class0=predictions_US, scores.class1=test_data$churn, curve=TRUE)$auc.integral
+pr_auc_DS <- pr.curve(scores.class0=predictions_DS, scores.class1=test_data$churn, curve=TRUE)$auc.integral
+pr_auc_grid_caret <- pr.curve(scores.class0=predictions_enet_grid_caret, scores.class1=test_data$churn, curve=TRUE)$auc.integral
+pr_auc_random_caret <- pr.curve(scores.class0=predictions_enet_random_caret, scores.class1=test_data$churn, curve=TRUE)$auc.integral
+```
+
+```{r Return PR-AUCs}
+print(pr_auc_US)
+print(pr_auc_DS)
+print(pr_auc_grid_caret)
+print(pr_auc_random_caret)
+```
+

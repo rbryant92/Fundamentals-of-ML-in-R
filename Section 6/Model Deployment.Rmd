@@ -1,0 +1,198 @@
+---
+title: "Model Deployment"
+author: "Richard Bryant"
+date: "10/12/2024"
+output: 
+  html_document:
+    code_folding: "show"
+runtime: shiny
+---
+
+That was a lot of material that we got through in the last few sections!   To recap, we covered data preprocessing, training some rudimentary models, how to evaluate those models, and then we compared several approaches for tuning and improving the performance of models, with particular focus paid to an implementation of Elastic Net.  Now that we have a model that we can be at least somewhat confident in, we are going to cover something completely different.  We will now compare two different approaches for deploying a model so that users other than you can access it and see predictions!
+
+```{r Load libraries and data}
+library(caret)
+library(ggplot2)
+library(modeldata)
+library(plumber)
+library(ROSE)
+library(shiny)
+library(tidymodels)
+```
+
+The two approaches we are going to demo in this section are **Shiny** and **Plumber**.  These will be completely different - one is a web-based application framework, and one is a REST API approach.  We'll start by creating the model we built in the previous sections that used up-sampling.  This really puts into perspective how simple everything we've done really has been once we go to recreate it!
+
+```{r Recreate the model}
+# load the data
+data(wa_churn)
+
+# partition into training vs. test
+set.seed(42)
+train_index <- createDataPartition(wa_churn$churn, p=0.7, list=FALSE)
+train_data <- wa_churn[train_index, ]
+test_data <- wa_churn[-train_index, ]
+
+# define the preprocessing recipe
+churn_recipe <- recipe(churn ~ ., data=train_data) %>%
+  step_impute_knn(all_numeric_predictors()) %>%  # impute missing values
+  step_dummy(all_nominal_predictors()) %>%  # one-hot encoding
+  step_scale(all_numeric_predictors()) %>%  # standardization
+  step_center(all_numeric_predictors())
+
+# prep and bake the recipe
+churn_prep <- prep(churn_recipe, training=train_data)
+train_data_tidymodels <- bake(churn_prep, new_data=train_data)
+
+# upsample and train the model
+up_sampled_data <- ovun.sample(churn ~ ., data=train_data_tidymodels, method='over', N=30000)$data
+model_en_US <- train(churn ~ ., data=up_sampled_data, method="glmnet", trControl=control)
+
+# serialize the model
+saveRDS(model_en_US, file = "model_en_US.rds")
+```
+
+That last piece is a new step.  It'll be clear why we're doing that later.
+
+## Shiny ##
+
+As mentioned above, Shiny is a tool that allows us to build interactive web applications directly from R.  It helps to showcase data visualizations and output from machine learning models, and while there is a learning curve associated with building Shiny applications, once you get good at it, you can spin up apps and get the results of models into the hands of others very rapidly.  Shiny has the benefits of allowing users to input data and receive predictions in real time.  As far as hosting is concerned, a Shiny app must be hosted on shinyapps.io.  
+
+A Shiny app has two key components:
+
+  - The **UI** component of a Shiny app defines how the app will look and how the users will interact with it.  It contains all the elements that users see and interact with, such as inputs, buttons, text outputs, and visualizations.  Basically, this makes up the "front end" of the app.
+  
+  - Likewise, the **server** component of a Shiny app can roughly be thought of as the "back end" of the app.  It gives us the logic for the app.  It uses reactive expressions and observers to update outputs based on the inputs the user toggles in the UI, and generates outputs specified.
+  
+Here's what we're going to do with the model we've created.  We want to build a Shiny app where we take in all the inputs that are features in the model.  But remember that when we get data in its raw form, we needed to use a recipe to transform it into a different format for the model.  We need to do all that in the backend, and given a new observation that has those features we specify, predict whether a customer with those features will churn or not.  We will also keep a descriptive like the PR-AUC in the app, to remind us of how well the model performed.  That may sound like a lot, sure, but we'll get it done.
+
+```{r Define the UI}
+ui <- fluidPage(
+  titlePanel("Churn Prediction"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("churn", "Churn:", choices = c("Yes", "No")),
+      numericInput("female", "Female:", value = 0, min = 0, max = 1),
+      numericInput("senior_citizen", "Senior Citizen:", value = 0, min = 0, max = 1),
+      numericInput("partner", "Partner:", value = 0, min = 0, max = 1),
+      numericInput("dependents", "Dependents:", value = 0, min = 0, max = 1),
+      numericInput("tenure", "Tenure:", value = 0, min = 0, max = max(train_data$tenure)),
+      numericInput("phone_service", "Phone Service:", value = 0, min = 0, max = 1),
+      selectInput("multiple_lines", "Multiple Lines:", choices = c("No", "No phone service", "Yes")),
+      selectInput("internet_service", "Internet Service:", choices = c("DSL", "Fiber optic", "No")),
+      selectInput("online_security", "Online Security:", choices = c("No", "No internet service", "Yes")),
+      selectInput("online_backup", "Online Backup:", choices = c("No", "No internet service", "Yes")),
+      selectInput("device_protection", "Device Protection:", choices = c("No", "No internet service", "Yes")),
+      selectInput("tech_support", "Tech Support:", choices = c("No", "No internet service", "Yes")),
+      selectInput("streaming_tv", "Streaming TV:", choices = c("No", "No internet service", "Yes")),
+      selectInput("streaming_movies", "Streaming Movies:", choices = c("No", "No internet service", "Yes")),
+      selectInput("contract", "Contract:", choices = c("Month-to-month", "One year", "Two year")),
+      numericInput("paperless_billing", "Paperless Billing (0/1):", value = 0, min = 0, max = 1),
+      selectInput("payment_method", "Payment Method:",
+                  choices = c("Bank transfer (automatic)", "Credit card (automatic)", "Electronic check", "Mailed check")),
+      numericInput("monthly_charges", "Monthly Charges:", value = 0,
+                   min = min(train_data$monthly_charges), max = max(train_data$monthly_charges)),
+      numericInput("total_charges", "Total Charges:", value = 0,
+                   min = min(train_data$total_charges), max = max(train_data$total_charges)),
+      actionButton("predict", "Predict")
+    ),
+    mainPanel(
+      textOutput("prediction"),
+      verbatimTextOutput("confusion_summary"),
+      plotOutput("pr_auc_plot")
+    )
+  )
+)
+```
+
+Whew.  That's just the UI.  To be fair, most of that code was just to define the inputs.  Now, let's define the server logic.
+
+```{r Define a server function}
+server <- function(input, output) {
+  
+  observeEvent(input$predict, {
+    # prepare new data for prediction
+    new_data <- list(
+      churn = factor(input$churn),
+      female = input$female,
+      senior_citizen = input$senior_citizen,
+      partner = input$partner,
+      dependents = input$dependents,
+      tenure = input$tenure,
+      phone_service = input$phone_service,
+      multiple_lines = factor(input$multiple_lines),
+      internet_service = factor(input$internet_service),
+      online_security = factor(input$online_security),
+      online_backup = factor(input$online_backup),
+      device_protection = factor(input$device_protection),
+      tech_support = factor(input$tech_support),
+      streaming_tv = factor(input$streaming_tv),
+      streaming_movies = factor(input$streaming_movies),
+      contract = factor(input$contract),
+      paperless_billing = input$paperless_billing,
+      payment_method = factor(input$payment_method),
+      monthly_charges = input$monthly_charges,
+      total_charges = input$total_charges
+    )
+
+    # error handling
+    if (any(sapply(new_data, is.null))){
+      output$prediction <- renderText("Error: One or more inputs are missing.")
+      return()
+    }
+
+    # transform from list to df
+    new_data_df <- as.data.frame(new_data)
+
+    # transform the new data using the same recipe as the training data
+    new_data_transformed <- bake(churn_prep, new_data = new_data_df)
+
+    # make prediction using the loaded model
+    pred <- predict(model_en_US, new_data_transformed)
+
+    # show prediction
+    output$prediction <- renderText({
+      paste("Predicted Churn:", ifelse(pred == 1, "Yes", "No"))
+    })
+    
+    # create predictions for the training data for performance evaluation
+    train_predictions <- predict(model_en_US, train_data_tidymodels)
+
+    # create confusion matrix summary on training data
+    confusion_matrix <- confusionMatrix(as.factor(train_predictions), as.factor(train_data_tidymodels$churn))
+    output$confusion_summary <- renderPrint({
+      confusion_matrix
+    })
+    
+    # PR-AUC curve
+    predictions_prob <- predict(model_en_US, new_data_transformed, type = "prob")
+    pr_auc_plot <- ggplot() +
+      geom_line(aes(x = predictions_prob$.pred_1, y = cumsum(predictions_prob$.pred_1) / sum(predictions_prob$.pred_1)), color = "blue") +
+      labs(title = "Precision-Recall Curve", x = "Recall", y = "Precision") +
+      theme_minimal()
+    
+    output$pr_auc_plot <- renderPlot({
+      pr_auc_plot
+    })
+  })
+}
+```
+
+Great!  Now, let's take it for a spin.
+
+```{r Run the app}
+shinyApp(ui = ui, server = server)
+```
+
+
+## Plumber ##
+
+Plumber is a package that allows for the creation of RESTful APIs directly from R code.  For those unfamiliar with this concept, REST API stands for Representational State Transfer API.  This is a web service that enables communication between a client and a server over the HTTP protocol, allowing clients to interact with resources.  The following are standard HTTP methods to perform actions on resources:
+
+  - DELETE: Removes a resource
+  - GET: Retrieves data from the server
+  - POST: Creates a new resource
+  - PUT: Updates a resource
+  
+Plumber is flexible and enables different technologies to interact with the model.  We start by defining an API endpoint, implementing logic to accept incoming data, call the model, and return predictions, and at the end can call `plumb()` to create an API server that listens for requests.  To pass the model, it needs to be _serialized_ - meaning, converted into a byte stream that can be saved to a file or transmitted over a network.  
+
+
