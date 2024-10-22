@@ -347,11 +347,9 @@ It follows that it is very important to have a measure that balances for more th
 
 As stressed earlier, we do not necessarily have the most imbalanced dataset ever here, but it is probably enough so that we want to prioritize it.  In particular, we will look at both of them for two different classifiers, and compare.  To do this, we are using functions from the pROC and PRROC packages.
 
-# TODO: Should train_model_tidymodels be the input to these models?
-# TODO: Tweak the elastic net parameters
-
 ```{r Get predictions}
 # Make predictions on the test data using the fitted models
+# Note we are using the models created by caret
 pred_logistic <- predict(model_logreg, newdata = test_data_tidymodels, type = "prob")[, 2]
 pred_en <- predict(model_en, newdata = test_data_tidymodels, type = "prob")[, 2]
 ```
@@ -385,7 +383,6 @@ pr_auc_en <- pr_en$auc.integral
 plot(pr_en, main = "PR-AUC - Elastic Net")
 pr_auc_en
 ```
-
 
 ## Section 5 - Tuning Models ##
 

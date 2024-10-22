@@ -1,0 +1,139 @@
+---
+title: "Sections 7: Practical Applications"
+author: "Richard Bryant"
+date: "10/20/2024"
+output: 
+  html_document:
+    code_folding: "show"
+---
+
+We have reached the last section of this course!  We realize that the issue in many machine learning textbooks and courses is that material will often teach to a relatively easy problem; then, it's difficult to find ways to apply the learning when faced with a new problem.  Therefore, what we will do together in this final section is to embark on a hands-on project focused on the popular credit card fraud detection dataset.  This dataset is different from the churn detection dataset we've been working with up to this point so far; differences in the data give rise to new challenges!  Luckily, we'll put everything we've learned in the course so far to work here.
+
+Conceptually, fraud detection is one of the most pressing challenges in the financial sector, and it can also be one of the most challenging, due to the class imbalance issue discussed many times throughout this course.  This is easy to imagine - the overwhelming majority of credit card transactions are _not_ fraudulent; therefore, we have to predict with precision an event that is rare.  In this project, we will have a dataset that contains a variety of features derived from transactions made by credit card users.  We will engage in a similar structured workflow to what we have done in the previous sections of course: basic data exploration, preprocessing, building a baseline model and evaluating, tuning it as necessary, and we will end with discussing other deployment options.  At each point, we will try to expand on ideas presented earlier in the course.
+
+We recommend participants to review this dataset and discussions on Kaggle: https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud/data 
+
+Without further adieu, let's get started.  The credit card dataset is provided as a CSV in our directory.
+
+```{r Load libraries}
+library(caret)
+library(pROC)
+library(PRROC)
+library(tidymodels)
+library(tidyverse)
+```
+
+```{r Set working directory}
+setwd(file.path("C:", "Users", "ribry", "OneDrive", "Documents", "Repositories", "Fundamentals of Machine Learning in R",
+                "Fundamentals-of-ML-in-R", "Section 7"))
+
+credit_card <- read_delim("creditcard.csv", delim=',')
+```
+
+```{r Head}
+head(credit_card)
+```
+
+```{r Structure}
+str(credit_card)
+```
+
+```{r Summary}
+summary(credit_card)
+```
+
+Yikes!  Look how imbalanced that response variable is, at 0.17%!!
+
+There are a few nice things about this dataset to point out along the way though.  All of the features are numeric, so we don't have to worry about categorical variables, factors, one-hot encoding, etc.  There is no missingness in here to worry about either.  We also have a ton of data - over 280,000 observations - to work with and a lot to learn from.  Naturally, for most algorithms we have to consider standardizing the features because they are on such wildly different scales, but that's "small potatoes".   The biggest challenge to us - and the issue that will influence pretty much everything we do in this section - is that wild class imbalance.
+
+The first thing we have to decide on is the partition for the training vs test set sizes.  Here, I am going to recommend an 80/20 split, in contrast with the 70/30 split that we used earlier.  Why?  Again, the key is the massive class imbalance!  Because our class balance is 0.17% vs. 99.83% - or a total of only 492 fraudulent transactions - we really have a paucity of data with which to learn patterns to identify the positive class.  Yes, we run the risk of the model not generalizing particularly well, but we really have less ability here to leave data on the table when we want to learn those fraudulent transactions as much as possible.  So we will use an 80/20 split, ensuring proportionality by class in the splits.
+
+```{r Split data into train vs testing}
+set.seed(42)
+train_index <- createDataPartition(credit_card$Class, p=0.8, list=FALSE)
+train_data <- credit_card[train_index, ]
+test_data <- credit_card[-train_index, ]
+```
+
+```{r Make factors}
+train_data$Class <- factor(train_data$Class)
+test_data$Class <- factor(test_data$Class)
+```
+
+We stressed this part in Section 2, and we encourage the participant to try this themselves, but if they use functions to preprocess data _prior_ to splitting into training and test, models will later learn the response variable in the test set, because this data was used to define parameters for data preprocessing.  We talked about this in Section 2, but this phenomenon where information from the test set becomes known at the time of training is known as *data leakage*.  The effect would be, later we train a model and the performance on the test set would be extraordinarily (and unrealistically) strong.  We stress again the importance of performing operations after training vs. test sets are already separated!
+
+Now that we have established that, let's use tidymodels to create recipes for data preprocessing.  Notice how little we have to do here!
+
+```{r Tidymodels recipe}
+cc_recipe <- recipe(Class ~ ., data=train_data) %>%
+  step_scale(all_numeric_predictors()) %>%  # standardization
+  step_center(all_numeric_predictors())
+
+cc_prep <- prep(cc_recipe, training=train_data)
+train_data_tidymodels <- bake(cc_prep, new_data=train_data)
+test_data_tidymodels <- bake(cc_prep, new_data=test_data)
+```
+
+How did we do?
+
+```{r Sanity check}
+summary(train_data_tidymodels)
+```
+
+We notice there are outliers in a lot of these variables.  However, absent any information or prior business knowledge here, there's no reason for us to go in and eliminate data because we think that it's fake.  Actually, on the contrary, this data might be some of the most useful for the model to use to learn the response!
+
+We're going to start with a logistic regression baseline, just like before, which again we will create using Tidymodels.
+
+```{r Logreg workflow}
+logreg_model <- logistic_reg(mode='classification') %>%
+  set_engine('glm')
+
+logreg_workflow <- workflow() %>%
+  add_recipe(cc_recipe) %>%
+  add_model(logreg_model)
+
+logreg_fit <- fit(logreg_workflow, data=train_data_tidymodels)
+```
+
+```{r Create predictions}
+pred_logreg <- predict(logreg_fit, new_data=test_data_tidymodels, type='prob')
+
+# convert predictions to a binary class (threshold, e.g., 0.5)
+pred_classes <- factor(ifelse(pred_logreg$.pred_1 > 0.01, 1, 0))
+```
+
+```{r Print the confusion matrix}
+confusion_logreg <- confusionMatrix(pred_classes, test_data_tidymodels$Class, positive = "1")
+
+print(confusion_logreg)
+```
+
+Wow!  Notice that the accuracy is 0.997, but the specifics of the model's performance tells a very different story, yielding precision less than 0.5.  However, it's honestly sort of impressive that the model is performing this well in the first place, and we might want to understand _why_ this is a little bit more.  In the meantime, let's look at the PR-AUC...
+
+```{r}
+pred_logreg <- predict(logreg_fit, new_data = test_data, type = 'class')
+
+pr_logreg <- pr.curve(scores.class0=pred_logreg$.pred_class, scores.class1=test_data$Class, curve=TRUE)
+pr_auc_logreg <- pr_logreg$auc.integral
+plot(pr_logreg, main = "PR-AUC - Logistic Regression")
+pr_auc_logreg
+```
+
+That's not too bad.  We'll see if we can get that any higher.  For now, let's actually take one small step back!  It's interesting to see the variables that are associated with the response.  We honestly could have done this beforehand, and it's not a bad idea to do so as it can inform decisions on how to cut/engineer different variables.  This course is not on inference per se, but this exercise can guide us in achieving better predictive performance.
+
+```{r Make plots, fig.width=12, fig.height=10}
+# use tidyr functions to lengthen the dataset
+train_data_long <- train_data_tidymodels %>%
+  pivot_longer(cols = -Class, names_to = "Variable", values_to = "Value")
+
+# facet wrap boxplots
+ggplot() +
+  geom_boxplot(data = train_data_long, aes(x = Class, y = Value), fill = 'red', color = 'black') +
+  facet_wrap(~Variable, scales = "free_y") +
+  labs(x = 'Class', y = 'Value') +
+  theme_minimal()
+```
+
+Aha.  We can start to see why the model probably performed better than one might have expected.  As we glance through these boxplots, it's easy to see that the distributions of the variables per different levels of the response variable look substantially different.  With all of these in the feature set and available for the model to learn from, yes, it will start to get somewhat easier to differentiate the two classes from one another.  We are not going to do this here, because we simply don't know enough about the domain and what these individual features represent exactly, but in some problems it can be a useful exercise to experiment with different combinations or operators of features (e.g. ratios) and conduct a similar approach to this.  We also alluded to this during Section 3, but many models that can be trained provide ways of identifying the most important features.  Examples include the coefficients and z-scores in logistic regression, as well as variable importance plots in Random Forests.
+
+We will conclude this section, and this course, with a novel approach to try and improve the accuracy here.  We will try a new way of up-sampling, so that we can try to learn the positive class more.  We will then pass this new dataset to an approach called a stacked model/workflow, and then evaluate that performance!

@@ -15,12 +15,19 @@ library(caret)
 library(ggplot2)
 library(modeldata)
 library(plumber)
+library(pROC)
+library(PRROC)
 library(ROSE)
 library(shiny)
 library(tidymodels)
 ```
 
 The two approaches we are going to demo in this section are **Shiny** and **Plumber**.  These will be completely different - one is a web-based application framework, and one is a REST API approach.  We'll start by creating the model we built in the previous sections that used up-sampling.  This really puts into perspective how simple everything we've done really has been once we go to recreate it!
+
+```{r Set working directory}
+setwd(file.path("C:", "Users", "ribry", "OneDrive", "Documents", "Repositories", "Fundamentals of Machine Learning in R",
+                "Fundamentals-of-ML-in-R", "Section 6"))
+```
 
 ```{r Recreate the model}
 # load the data
@@ -164,11 +171,7 @@ server <- function(input, output) {
     })
     
     # PR-AUC curve
-    predictions_prob <- predict(model_en_US, new_data_transformed, type = "prob")
-    pr_auc_plot <- ggplot() +
-      geom_line(aes(x = predictions_prob$.pred_1, y = cumsum(predictions_prob$.pred_1) / sum(predictions_prob$.pred_1)), color = "blue") +
-      labs(title = "Precision-Recall Curve", x = "Recall", y = "Precision") +
-      theme_minimal()
+    pr_auc_plot <- pr.curve(scores.class0=train_predictions, scores.class1=train_data_tidymodels$churn, curve=TRUE)
     
     output$pr_auc_plot <- renderPlot({
       pr_auc_plot
@@ -183,7 +186,6 @@ Great!  Now, let's take it for a spin.
 shinyApp(ui = ui, server = server)
 ```
 
-
 ## Plumber ##
 
 Plumber is a package that allows for the creation of RESTful APIs directly from R code.  For those unfamiliar with this concept, REST API stands for Representational State Transfer API.  This is a web service that enables communication between a client and a server over the HTTP protocol, allowing clients to interact with resources.  The following are standard HTTP methods to perform actions on resources:
@@ -195,4 +197,7 @@ Plumber is a package that allows for the creation of RESTful APIs directly from 
   
 Plumber is flexible and enables different technologies to interact with the model.  We start by defining an API endpoint, implementing logic to accept incoming data, call the model, and return predictions, and at the end can call `plumb()` to create an API server that listens for requests.  To pass the model, it needs to be _serialized_ - meaning, converted into a byte stream that can be saved to a file or transmitted over a network.  
 
+```{r Run the API}
+plumber::plumb("api.R")$run(port=8000)
+```
 
