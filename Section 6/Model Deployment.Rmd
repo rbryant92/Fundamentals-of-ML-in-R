@@ -1,7 +1,7 @@
 ---
 title: "Model Deployment"
 author: "Richard Bryant"
-date: "10/12/2024"
+date: "10/23/2024"
 output: 
   html_document:
     code_folding: "show"
@@ -39,6 +39,8 @@ train_index <- createDataPartition(wa_churn$churn, p=0.7, list=FALSE)
 train_data <- wa_churn[train_index, ]
 test_data <- wa_churn[-train_index, ]
 
+control <- trainControl(method='cv', number=5, classProbs=TRUE)
+
 # define the preprocessing recipe
 churn_recipe <- recipe(churn ~ ., data=train_data) %>%
   step_impute_knn(all_numeric_predictors()) %>%  # impute missing values
@@ -62,7 +64,7 @@ That last piece is a new step.  It'll be clear why we're doing that later.
 
 ## Shiny ##
 
-As mentioned above, Shiny is a tool that allows us to build interactive web applications directly from R.  It helps to showcase data visualizations and output from machine learning models, and while there is a learning curve associated with building Shiny applications, once you get good at it, you can spin up apps and get the results of models into the hands of others very rapidly.  Shiny has the benefits of allowing users to input data and receive predictions in real time.  As far as hosting is concerned, a Shiny app must be hosted on shinyapps.io.  
+As mentioned above, Shiny is a tool that allows us to build interactive web applications directly from R.  It helps to showcase data visualizations and output from machine learning models, and while there is a learning curve associated with building Shiny applications, once you get good at it, you can spin up apps and get the results of models into the hands of others very rapidly.  Shiny has the benefits of allowing users to input data and receive predictions in real time.  As far as hosting is concerned, a Shiny app is most commonly hosted at shinyapps.io, where there's a massive gallery to explore.  The user could also install Shiny Server on a VM or Linux server or use RStudio Connect - we will discuss this option more later in this section.
 
 A Shiny app has two key components:
 
@@ -71,6 +73,7 @@ A Shiny app has two key components:
   - Likewise, the **server** component of a Shiny app can roughly be thought of as the "back end" of the app.  It gives us the logic for the app.  It uses reactive expressions and observers to update outputs based on the inputs the user toggles in the UI, and generates outputs specified.
   
 Here's what we're going to do with the model we've created.  We want to build a Shiny app where we take in all the inputs that are features in the model.  But remember that when we get data in its raw form, we needed to use a recipe to transform it into a different format for the model.  We need to do all that in the backend, and given a new observation that has those features we specify, predict whether a customer with those features will churn or not.  We will also keep a descriptive like the PR-AUC in the app, to remind us of how well the model performed.  That may sound like a lot, sure, but we'll get it done.
+
 
 ```{r Define the UI}
 ui <- fluidPage(
@@ -163,18 +166,19 @@ server <- function(input, output) {
     
     # create predictions for the training data for performance evaluation
     train_predictions <- predict(model_en_US, train_data_tidymodels)
+    train_predictions <- factor(train_predictions, levels = c("Yes", "No"))
 
     # create confusion matrix summary on training data
-    confusion_matrix <- confusionMatrix(as.factor(train_predictions), as.factor(train_data_tidymodels$churn))
+    confusion_matrix <- confusionMatrix(as.factor(train_predictions), as.factor(train_data_tidymodels$churn), positive = "Yes")
     output$confusion_summary <- renderPrint({
       confusion_matrix
     })
-    
-    # PR-AUC curve
-    pr_auc_plot <- pr.curve(scores.class0=train_predictions, scores.class1=train_data_tidymodels$churn, curve=TRUE)
-    
+
     output$pr_auc_plot <- renderPlot({
-      pr_auc_plot
+      pr_auc_curve <- pr.curve(scores.class0=as.factor(train_predictions),
+                               scores.class1=as.factor(train_data_tidymodels$churn),
+                               curve=TRUE)
+      plot(pr_auc_curve)
     })
   })
 }
@@ -201,3 +205,14 @@ Plumber is flexible and enables different technologies to interact with the mode
 plumber::plumb("api.R")$run(port=8000)
 ```
 
+Wow, that's amazing!  We basically built a prediction function, in a similar style to how we built the Shiny app, to where we pass various inputs in.  Now, what exactly happened when we called this `plumb()` function??
+
+Basically, when we run this command, the Plumber package generates an OpenAPI specification for the API, where OpenAPI defines a standard interface to RESTful APIs.  Swagger, which is seen by default when we run this, is a toolset for API documentation and testing and provides an interactive UI for us to explore and test API endpoints.  This is, of course, very neat.  But this probably isn't the end-all be-all for production, becasue this method only works on a local machine.
+
+We will close this section out by describing a few ways that one can deploy your R and Plumber API to an endpoint.  This is also not an entirely comprehensive list, but it will cover the most common approaches:
+
+**Docker Deployment**: Docker is a platform that can be used for deployment of applications via what's known as _containerization_.  This is almost like "zipping" the application - it's a standalone unit that includes everything needed to run the application (e.g. code, libraries, and tools).  If we go this route, we would create a Dockerfile - this can be thought of as a set of instructions that tell Docker what to install, what to run, etc.  This Docker container could then be deployed to a cloud platform.
+
+**Web Server**: If we want, we could set up a web server (e.g. Apache) to host the API and set up load balancing, SSL, etc., and configure it to proxy requests to the Plumber API.
+
+**Cloud Platforms**: RStudio offers the *RStudio Connect* platform, which provides a UI for deploying Shiny apps, Plumber APIs, etc. easily, and provides various tools for managing deployments, version control, authentication, etc.  The user would need to install RStudio Connect on a server, use the RStudio IDE to deploy the API, and then the API would be accessible via a public URL subject to configurations, user-defined authentication, etc.  Other cloud tools include Heroku, DigitalOcean, and AWS EC2.

@@ -1,7 +1,7 @@
 ---
 title: "Sections 2-5: Data Preprocessing, Models, Evaluating, & Tuning"
 author: "Richard Bryant"
-date: "10/12/2024"
+date: "10/23/2024"
 output: 
   html_document:
     code_folding: "show"
@@ -20,6 +20,7 @@ data(wa_churn)
 ```
 
 First and foremost, we want to emphasize that it is not advised just to take your data right out of the box and train a machine learning model on it!  It's recommended to first inspect what the data even looks like, from a structural and descriptive standpoint, and perform operations on it to get it in an appropriate format.  On one hand, the packages in the tidyverse help tremendously to make this possible.  The dataset we are using today is reasonably "tidy" - in the sense that each row represents a unique observation, each column represents a variable, and each cell represents data.  However, that's just the first step - we aren't yet ready for machine learning.  That's where our first section comes in.
+
 
 ## Section 2 - Data Preprocessing ## 
 
@@ -46,6 +47,7 @@ sum(is.na(wa_churn))
 
 We will use the two frameworks to perform the following operations:
 
+
 #### Operations ####
 
 **Imputing missing data**: Most machine learning algorithms cannot handle missing values.  We don't want to get rid of 11 whole rows of data.  Therefore, we're going to "impute", or make up those 11 values.  There is not a good "cutoff" rule of thumb here per se, but let's suppose this variable were 40% missing or more.  We might ask next if these data are missing at random.  That's usually not the case, but suppose it is here.  Then we might just have to get rid of the whole variable.  In this case, we're comfortable making up just over 0.1% of the values for one variable!
@@ -70,6 +72,7 @@ test_data <- wa_churn[-train_index, ]
 ```
 
 Great.  Now, let's use caret!
+
 
 #### Caret ####
 
@@ -108,6 +111,7 @@ head(test_data_caret)
 
 Looks good!   We've successfully imputed missing data, performed one-hot encoding, and standardized our training and test sets.  Now, let's see how we would do this with Tidymodels.
 
+
 #### Tidymodels ####
 
 With Tidymodels, the process is a little more streamlined.  Essentially, we define a "recipe".  This recipe is just like what you use when you're cooking: it's essentially a list of steps that tells you what to do to go from ingredients to your meal.  Well, when we define a recipe for data preprocessing, we're telling R what steps to take to transform our training and test data to the format we want.  Observe.  We'll start from the train and test data, before we performed any steps.  
@@ -122,7 +126,7 @@ churn_recipe <- recipe(churn ~ ., data=train_data) %>%
 
 Great.  We've defined the recipe.  Now, we need to prepare it, and "bake it" - aka, apply it to the training data, followed by the testing data.
 
-```{r Tidymodels recipe}
+```{r Prep recipe}
 churn_prep <- prep(churn_recipe, training=train_data)
 ```
 
@@ -136,10 +140,11 @@ test_data_tidymodels <- bake(churn_prep, new_data=test_data)
 
 Next, let's sanity check again.  If it looks good, we're ready to move on and train some models!
 
-```{r Sanity check}
+```{r Sanity check again}
 head(train_data_tidymodels)
 head(test_data_tidymodels)
 ```
+
 
 ## Section 3 - Training Models ##
 
@@ -158,6 +163,7 @@ This is not a theoretical machine learning course per se.  Our emphasis in this 
 **Elastic Net**: A regularized regression method that linearly combines the L1 (lasso) and L2 (ridge) penalties.  Lasso is a method that performs both variable selection and regularization; ridge regression is a similar regularization method that is commonly used to reduce multicollinearity.  Elastic Net essentially combines the advantages of both the lasso and ridge methods while mitigating the limitations of both methods.
 
 This is by no means a comprehensive list of machine learning algorithms!  Other popular approaches include Naive Bayes and Support Vector Machines.  One could also easily make an entire course around Neural Networks.  However, for the purposes of this course, we think with these algorithms that we will be able to drive home the main ideas.
+
 
 #### Caret ####
 
@@ -220,6 +226,7 @@ print(confusion_en)
 
 Notice that it's not super easy to compare the performance of one model to another, because there are so many moving parts: the four confusion matrix counts, a series of metrics down below, etc...  that's fine, that's the topic for the entire next section!  We'll conclude this section by demonstrating how to do the exact same process shown above in Tidymodels.
 
+
 #### Tidymodels ####
 
 Tidymodels will look a little more complicated than what we did with Caret where we had a one-stop shop `train()` function and just pass the model of interest as an argument.  In Tidymodels when we go to train models, similar to what we saw with data preprocessng, we build pipelines where one function "pipes" to the next in a series of steps.  We start by specifying the models, then fit them using a `workflow()` object, then fitting them. Let's go take it for a spin.
@@ -259,7 +266,7 @@ enet_workflow <- workflow() %>%
 
 Now we're ready to fit:
 
-```{r Build tidymodels workflows}
+```{r Fit tidymodels}
 logreg_fit <- fit(logreg_workflow, data=train_data)
 knn_fit <- fit(knn_workflow, data=train_data)
 tree_fit <- fit(tree_workflow, data=train_data)
@@ -283,6 +290,7 @@ confusion_enet <- confusionMatrix(as.factor(pred_classes_en), as.factor(test_dat
 # print the confusion matrix
 print(confusion_enet)
 ```
+
 
 ## Section 4 - Evaluating Models ##
 
@@ -335,6 +343,7 @@ It's also worth thinking about what we really want to optimize with this particu
 
 Both of these thought processes are quite possible, and similar ideas occur all the time in the real world!  That's also not to say one thought process is better than the other.  It all depends on the business's prerogative and priorities.
 
+
 #### ROC Curves ####
 
 Now at this point, let's think about the following extreme scenario.  Suppose we have a model that is 100% perfectly sensitive.  That's not hard at all to do - just create a model that says ALL customers are going to churn!  That way, you would correctly identify all the customers that would in fact churn; but such a model wouldn't be able to discriminate between positives and negatives, therefore it would be useless.  However, this situation does help us think about the tradeoff between sensitivity and both specificity and precision.  If we lower our threshold and make it easier to predict positives, it should not be surprising that we are going to get more false positives (i.e. lower precision), and also that we are less likely to correctly identify negatives.
@@ -383,6 +392,7 @@ pr_auc_en <- pr_en$auc.integral
 plot(pr_en, main = "PR-AUC - Elastic Net")
 pr_auc_en
 ```
+
 
 ## Section 5 - Tuning Models ##
 
@@ -433,6 +443,7 @@ print(confusion_enet_DS)
 
 Wow!  So actually, the confusion matrix when we tried up-sampling ended up wildly imbalanced, with great sensitivity but abysmal specificity and mediocre precision.  But when we tried downsampling, we ended up with a very balanced model.  We do encourage participants to try this with different configurations of N, and encourage trying both approaches regardless of the problem.
 
+
 #### Grid Search & Random Search #####
 
 Next, we will cover hyperparameter tuning.  A **hyperparameter** is a configuration variable that is set before the learning process begins and controls the behavior of the training algorithm.  Unlike model parameters, which are learned from the training data, hyperparameters are typically determined through experimentation.  They can significantly influence model performance, and we will observe this for the remainder of this section.  We do note that, while this is not a theoretical machine learning course, hyperparameter tuning can require some prior knowledge about the underlying method, and normal ranges for their hyperparameters - not to mention what the hyperparameters for that particular engine actually are.  We do encourage reading the documentation, if one isn't totally sure about these things!
@@ -444,6 +455,7 @@ There are two different approaches we will illustrate here for hyperparameter tu
 **Random Search**: With random search, we randomly sample from a distribution of possible hyperparameter values.  The range to randomly sample from is defined, and then we randomly sample a fixed number of combinations from these ranges.  Generally, this is faster and more efficient than grid search, but because we are only sampling from a subset of all possible combinations, there is no guarantee that the optimal combination will be found.
 
 We will now illustrate both grid search and random search, using both Caret and Tidymodels.
+
 
 ##### Caret - Grid Search #####
 
@@ -476,6 +488,7 @@ print(confusion_enet_grid_caret)
 ```
 
 Interesting.  Now, let's try random search.
+
 
 ##### Caret - Random Search #####
 
@@ -516,6 +529,7 @@ print(confusion_enet_random_caret)
 
 Great.  Next, let's try the same stuff with tidymodels!  Remember that we have already defined an `enet_model` using the 'glmnet' engine and the 'classification' mode, and a workflow by adding the `enet_model` and the `churn_recipe`.  Here, however, we are tell the specification that we will tune the hyperparameters later, rather than manually passing them as we did before.  Note that there is a different set of hyperparameters we are using here.
 
+
 ##### Tidymodels - Grid Search #####
 
 ```{r Redefine tidymodels model & workflow}
@@ -528,7 +542,7 @@ enet_workflow <- workflow() %>%
   add_recipe(churn_recipe)
 ```
 
-```{r Define and grid}
+```{r Define grid}
 enet_grid <- expand.grid(
   penalty = seq(0.001, 0.5, 0.01),
   mixture = seq(0.1, 0.9, 0.1)
@@ -566,6 +580,7 @@ print(confusion_enet_grid_tm)
 
 Not bad.  Let's wrap up by trying random search with Tidymodels.
 
+
 ##### Tidymodels - Random Search #####
 
 ```{r Implement random search grid}
@@ -587,11 +602,11 @@ best_enet_random <- select_best(enet_tune_random, metric='accuracy')
 final_enet_random <- finalize_workflow(enet_workflow, best_enet_random)
 ```
 
-```{r Apply grid}
+```{r Apply grid to Elastic Net}
 enet_fit_random <- fit(final_enet_random, data=train_data)
 ```
 
-```{r Evaluate model}
+```{r Evaluate this model}
 predictions_enet_random_tm <- predict(enet_fit_random, new_data=test_data, type='class')
 
 results_enet_random_tm <- test_data %>%

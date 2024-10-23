@@ -42,19 +42,8 @@ predict_churn <- function(female, senior_citizen, partner, dependents, tenure,
     paperless_billing = as.numeric(paperless_billing),
     monthly_charges = as.numeric(monthly_charges),
     total_charges = as.numeric(total_charges),
-    # multiple_lines = factor(multiple_lines, levels = c("No", "No phone service", "Yes")),
-    # internet_service = factor(internet_service, levels = c("DSL", "Fiber optic", "No")),
-    # online_security = factor(online_security, levels = c("No", "No internet service", "Yes")),
-    # online_backup = factor(online_backup, levels = c("No", "No internet service", "Yes")),
-    # device_protection = factor(device_protection, levels = c("No", "No internet service", "Yes")),
-    # tech_support = factor(tech_support, levels = c("No", "No internet service", "Yes")),
-    # streaming_tv = factor(streaming_tv, levels = c("No", "No internet service", "Yes")),
-    # streaming_movies = factor(streaming_movies, levels = c("No", "No internet service", "Yes")),
-    # contract = factor(contract, levels = c("Month-to-month", "One year", "Two year")),
-    # payment_method = factor(payment_method, levels = c("Bank transfer", "Credit card", "Electronic check", "Mailed check"))
-    # )
 
-    # Manually create dummy variables using ifelse
+    # Create dummy variables using ifelse
     multiple_lines_No.phone.service = ifelse(multiple_lines == "No phone service", 1, 0),
     multiple_lines_No = ifelse(multiple_lines == "No", 1, 0),
     multiple_lines_Yes = ifelse(multiple_lines == "Yes", 1, 0),
